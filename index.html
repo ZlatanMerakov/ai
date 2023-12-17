@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ML inference</title>
+  
+  
+  <style>
+  
+    .mybutton {
+		  background-color: #0080FF;
+		  border: none;
+		  color: white;
+		  padding: 15px 32px;
+		  text-align: center;
+		  text-decoration: none;
+		  display: inline-block;
+		  font-size: 16px;
+		  margin: 4px 2px;
+		  cursor: pointer;
+		}
+		  
+  </style>
+  
+
+  <!-- Import TensorFlow.js -->
+  <!--<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.0.4/dist/tf.min.js"></script>-->
+  <script src="tf.min.js"></script>
+  
+  
+  
+  <!-- Import the main script file -->
+  <!-- <script src="script-2.js" type="module"></script> -->
+  
+  
+  <script>
+  
+  var clickX = new Array();
+  var clickY = new Array();
+  var clickDrag = new Array();
+  var paint;
+  var canvas;
+  var context;
+  
+  var disableCanvas = false;
+  
+  var model;
+
+  
+  window.onload = function()
+  {
+
+	  canvas = document.getElementById('myCanvas');
+	  
+	  context = canvas.getContext("2d");
+	  
+  }
+  
+  
+	  function getX(event) 
+	  {	
+		if (event.type.includes("touch")) 
+		{
+			return event.targetTouches[0].pageX;
+		}
+		else 
+		{
+			return event.pageX;
+		}
+	  }
+	  
+	  
+	  function getY(event) 
+	  {
+		if (event.type.includes("touch")) 
+		{
+			return event.targetTouches[0].pageY;
+		}
+		else 
+		{
+			return event.pageY;
+		}
+	  }
+	  
+	  
+	  function canvasMousedown(e)
+	  {
+		  if (e.target == canvas)
+		  {
+			e.preventDefault();
+		  }
+		  
+		  if (disableCanvas)
+			return;
+		  
+	  
+		  var mouseX = getX(e) - canvas.offsetLeft;
+		  var mouseY = getY(e) - canvas.offsetTop;
+				
+		  paint = true;
+		  addClick(getX(e) - canvas.offsetLeft, getY(e) - canvas.offsetTop);
+		  redraw();
+	  }
+	  
+	  
+	  function canvasMousemove(e)
+	  {
+		if (e.target == canvas)
+		{
+			e.preventDefault();
+		}
+		
+		if (paint)
+		{
+			addClick(getX(e) - canvas.offsetLeft, getY(e) - canvas.offsetTop, true);
+			redraw();
+		}
+		
+	  }
+	  
+	  function canvasMouseup(e)
+	  {
+		if (e.target == canvas)
+		{
+			e.preventDefault();
+		}
+		
+		paint = false;
+	  }
+	  
+  
+	  
+	  
+      function canvasMouseleave(e)
+	  {
+		  paint = false;
+	  }
+		  
+	  
+	  function addClick(x, y, dragging)
+	  {
+		  clickX.push(x);
+		  clickY.push(y);
+		  clickDrag.push(dragging);
+	  }
+	  
+	  function redraw()
+	  {
+	  
+		  //context.clearRect(0, 0, context.canvas.width, context.canvas.height); // Clears the canvas
+		  
+		  context.strokeStyle = "#000000";
+		  context.lineJoin = "round";
+		  context.lineWidth = 20;
+					
+		  for (var i=0; i < clickX.length; i++) 
+		  {		
+			context.beginPath();
+			
+			if(clickDrag[i] && i)
+			{
+			   context.moveTo(clickX[i-1], clickY[i-1]);
+			}
+			else
+			{
+			   context.moveTo(clickX[i]-1, clickY[i]);
+			}
+			
+			context.lineTo(clickX[i], clickY[i]);
+			context.closePath();
+			context.stroke();
+
+		  }
+	}
+	
+	function clearCanvas()
+	{
+
+		clickX = [];
+		clickY = [];
+		clickDrag = [];
+		
+		context.clearRect(0, 0, context.canvas.width, context.canvas.height);
+		
+		//document.getElementById('predNum').innerHTML = '';
+		
+		
+		
+		var canvasBarChart = document.getElementById("barChart");
+        var contextBarCode = canvasBarChart.getContext("2d");
+		
+		
+		contextBarCode.clearRect(0, 0, canvas.width, canvas.height);
+		
+		
+		disableCanvas = false;
+		
+		document.getElementById('infere').disabled = false;
+		
+	}
+	
+	
+	
+	
+	// given grayscale image, find bounding rectangle of digit defined
+    // by above-threshold surrounding
+    function getBoundingRectangle(img, threshold) 
+	{
+		var rows = img.length;
+		var columns = img[0].length;
+		var minX=columns;
+		var minY=rows;
+		var maxX=-1;
+		var maxY=-1;
+		for (var y = 0; y < rows; y++) 
+		{
+		  for (var x = 0; x < columns; x++) 
+		  {
+			if (img[y][x] < threshold) 
+			{
+			  if (minX > x) minX = x;
+			  if (maxX < x) maxX = x;
+			  if (minY > y) minY = y;
+			  if (maxY < y) maxY = y;
+			}
+		  }
+		}
+		return { minY: minY, minX: minX, maxY: maxY, maxX: maxX};
+   }
+   
+   
+   // computes center of mass of digit, for centering
+   // note 1 stands for black (0 white) so we have to invert.
+   function centerImage(img) 
+   {
+		var meanX = 0;
+		var meanY = 0;
+		var rows = img.length;
+		var columns = img[0].length;
+		var sumPixels = 0;
+		for (var y = 0; y < rows; y++) 
+		{
+		  for (var x = 0; x < columns; x++) 
+		  {
+			var pixel = (1 - img[y][x]);
+			//var pixel = img[y][x];
+			sumPixels += pixel;
+			meanY += y * pixel;
+			meanX += x * pixel;
+		  }
+		}
+		meanX /= sumPixels;
+		meanY /= sumPixels;
+		
+		var dY = Math.round(rows/2 - meanY);
+		var dX = Math.round(columns/2 - meanX);
+		return {transX: dX, transY: dY};
+   }
+	
+	
+	
+	function infere ()
+	{
+	
+	
+		var arr = [];
+		
+		var paths = [];
+		
+		var x;
+		var y;
+		var output;
+		var prediction;
+		
+	
+		
+		
+		
+		var imgData = context.getImageData(0, 0, context.canvas.width, context.canvas.height);
+		// { data: [r,g,b,a,r,g,b,a,r,g,..], ... }
+		
+		var pix = imgData.data;
+		
+		var j = 0;
+		
+		
+		var row = 0;
+		
+		var col = -1;
+		
+		var grayscaleImg = [];
+		
+		grayscaleImg[0] = [];
+		
+		
+		for (var i = 0; i < pix.length; i += 4) 
+		{
+		//	pix[i  ] = 255 - pix[i  ]; // red
+		//	pix[i+1] = 255 - pix[i+1]; // green
+		//	pix[i+2] = 255 - pix[i+2]; // blue
+	
+			arr[j] = pix[i+3] / 255;
+			j++;
+			
+			
+			//---
+			
+			col++;
+			
+			if (col >= context.canvas.width)
+			{
+				col = 0;
+				row++;
+				
+				grayscaleImg[row] = [];
+			}
+			
+			grayscaleImg[row][col] = 1 - pix[i+3] / 255;
+			
+		}
+		
+		
+		
+		
+		var boundingRectangle = getBoundingRectangle(grayscaleImg, 0.01);
+		var trans = centerImage(grayscaleImg); // [dX, dY] to center of mass
+		
+		var canvasCopy = document.createElement("canvas");
+        canvasCopy.width = imgData.width;
+        canvasCopy.height = imgData.height;
+        var copyCtx = canvasCopy.getContext("2d");
+        var brW = boundingRectangle.maxX+1-boundingRectangle.minX;
+        var brH = boundingRectangle.maxY+1-boundingRectangle.minY;
+        var scaling = 190 / (brW>brH?brW:brH);
+		
+        // scale
+        copyCtx.translate(canvas.width/2, canvas.height/2);
+        copyCtx.scale(scaling, scaling);
+        copyCtx.translate(-canvas.width/2, -canvas.height/2);
+		
+        // translate to center of mass
+        copyCtx.translate(trans.transX, trans.transY);
+		
+		copyCtx.drawImage(context.canvas, 0, 0);
+		
+		
+		context.clearRect(0, 0, context.canvas.width, context.canvas.height); // Clears the canvas
+		context.drawImage(canvasCopy, 0, 0);
+		
+		
+		//==============
+		
+		
+		imgData = context.getImageData(0, 0, context.canvas.width, context.canvas.height);
+
+		//var canvasSmall = document.getElementById('myCanvasSmall');
+	    //var contextSmall = canvasSmall.getContext("2d");
+		//contextSmall.putImageData(imgData, 0, 0);
+	  
+
+		var canvasSmall = document.createElement("canvas");
+        canvasSmall.width = 28;
+        canvasSmall.height = 28;
+		
+		
+		var contextSmall = canvasSmall.getContext("2d");
+		
+		contextSmall.putImageData(imgData, 0, 0);
+
+        // scale
+		
+		contextSmall.setTransform(1, 0, 0, 1, 0, 0);
+		
+        contextSmall.scale(0.1, 0.1);
+		
+		contextSmall.drawImage(canvas, 0, 0);
+
+		
+		//==============
+		
+		var pixSmall = contextSmall.getImageData(0, 0, contextSmall.canvas.width, contextSmall.canvas.height).data;
+		
+		
+		var arrSmall = [];
+		
+		j = 0;
+	
+		
+		for (var i = 0; i < pixSmall.length; i += 4) 
+		{
+		//	pix[i  ] = 255 - pix[i  ]; // red
+		//	pix[i+1] = 255 - pix[i+1]; // green
+		//	pix[i+2] = 255 - pix[i+2]; // blue
+	
+	
+		
+			arrSmall[j] = pixSmall[i+3] / 255;
+			j++;
+			
+		}
+		
+		
+	
+
+	  
+	  
+		//--- 4 ---
+	  
+
+		//str = "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,168,91,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,234,126,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,51,254,126,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,38,178,31,0,0,0,0,0,51,254,81,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,94,254,83,0,0,0,0,0,87,254,54,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,160,254,56,0,0,0,0,0,189,238,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,13,227,168,2,0,0,0,0,0,194,236,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,55,254,114,0,0,0,0,0,16,235,167,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,115,254,50,0,0,0,0,0,103,254,105,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7,221,236,75,156,180,190,252,252,253,254,114,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,15,254,254,254,252,211,179,179,179,246,254,247,94,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,217,239,117,22,0,0,0,0,226,254,242,197,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,14,18,0,0,0,0,0,27,243,207,46,37,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,99,254,132,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,116,254,67,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,116,254,61,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,116,254,61,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,174,255,100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,187,254,83,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,115,176,10,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0";
+	  
+	  
+		//for (var i=0; i<784; i++)
+		//{
+			//arr[i] = parseFloat(str.split(",")[i]) / 255;
+		//}
+
+		x = tf.tensor1d(arrSmall); 
+
+
+
+		y = x.reshape([1, 28, 28, 1]);
+	  
+		output = model.predict(y);
+	  
+		var prediction = output.argMax([-1]).dataSync()[0];
+
+		//document.getElementById('predNum').innerHTML = prediction;
+		
+		
+		//--- bar chart ---
+		
+
+		
+		//console.log(output.dataSync()[0]);
+		
+		
+		var canvasBarChart = document.getElementById("barChart");
+        var contextBarCode = canvasBarChart.getContext("2d");
+		
+		
+		//contextBarCode.clearRect(0, 0, canvas.width, canvas.height);
+		
+		
+		
+		
+		
+		
+		var maxVal = 0;
+		
+		for (var i=0; i<=9; i++)
+		{
+			if (output.dataSync()[i] > maxVal)
+				maxVal = output.dataSync()[i];
+		}
+		
+		
+		
+		
+		
+		for (var i=0; i<=9; i++)
+		{
+			contextBarCode.font = '10px Arial';
+			contextBarCode.fillStyle = 'black';
+			contextBarCode.fillText(i, 7, (i + 2) * 20 + 12); 
+			
+			
+			if (  output.dataSync()[i]== maxVal)
+				contextBarCode.fillStyle = '#2E9AFE';
+			else
+				contextBarCode.fillStyle = '#E6E6E6';
+				
+			contextBarCode.fillRect(20, (i + 2) * 20, 150 * output.dataSync()[i], 15);
+
+		}
+		
+		
+		
+		contextBarCode.font = '250px Arial';
+		contextBarCode.fillStyle = "rgba(0, 0, 0, 0.3)";
+		contextBarCode.fillText(prediction, 100, 230); 
+		
+		
+		
+		disableCanvas = true;
+		
+		document.getElementById('infere').disabled = true;
+
+		
+	}
+	
+	
+	
+	async function init() 
+	{  
+		model =  await tf.loadLayersModel('my-model.json');
+	}
+	
+	
+	init();
+
+  
+  
+  </script>
+  
+  
+
+</head>
+
+<body>
+
+
+<div style="border:2px solid #888; width: 280px; height:280px; float: left; box-shadow: 5px 5px 4px rgba(0,0,0,0.3);">
+
+<canvas id="myCanvas" width="280" height="280" onmousedown='canvasMousedown(event);' onmousemove='canvasMousemove(event);' onmouseup='canvasMouseup(event);' onmouseleave='canvasMouseleave(event);' ontouchstart='canvasMousedown(event);' ontouchmove='canvasMousemove(event);' ontouchend='canvasMouseup(event);'></canvas>
+
+</div>
+
+<!-- <span id="predNum" style="font-size: 30px; margin-left: 10px;"></span> -->
+
+<canvas id="barChart" width="280" height="280" style="border:0px solid #000000; margin-left: 10px;""></canvas>
+
+<br><br>
+
+<div style="float: left;">
+
+<button id="clearCanvas" onclick="clearCanvas();" class="mybutton" style="background-color: #FA5858;">Clear</button>
+
+<button id="infere" onclick="infere(); this.disabled = true;" class="mybutton">Recognize</button>
+
+</div>
+
+
+
+
+
+
+<!--
+<div style="border:1px solid blue; width: 28px; height:28px; float: left;">
+<canvas id="myCanvasSmall" width="28" height="28" ></canvas>
+</div>
+-->
+
+
+
+</body>
+
+</html>
